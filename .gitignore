@@ -1,0 +1,14 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Qdrant local storage
+qdrant_storage/
+
+# Virtual environment
+venv/
+.venv/
