@@ -12,3 +12,7 @@ qdrant_storage/
 # Virtual environment
 venv/
 .venv/
+
+# Temporary API uploads
+temp_uploads/
+test_results/
