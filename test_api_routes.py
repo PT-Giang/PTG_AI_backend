@@ -42,7 +42,8 @@ class APIRouteTests(unittest.TestCase):
             for name in ("../../lesson.pdf", "lesson.DOCX"):
                 response = self.post(name)
                 self.assertEqual(response.status_code, 200, response.text)
-                self.assertEqual(response.json(), {"course_id": "course-1", **RESULTS})
+                initial_results = {key: RESULTS[key] for key in main.rag_service.INITIAL_CHAIN_NAMES}
+                self.assertEqual(response.json(), {"course_id": "course-1", **initial_results})
                 self.assertEqual(list(self.uploads.iterdir()), [])
         self.assertNotEqual(paths[0], paths[1])
 

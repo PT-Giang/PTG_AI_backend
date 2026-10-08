@@ -35,7 +35,31 @@ curl.exe http://127.0.0.1:8000/api/v1/courses/generate -F "file=@papers/200_tu_v
 curl.exe http://127.0.0.1:8000/api/v1/courses/generate -F "course_id=html5-1" -F "requirement=Tôi muốn học HTML5 từ cơ bản"
 ```
 
-Cả hai cách gọi LLM thật; chỉ chế độ tài liệu thêm dữ liệu vào Qdrant. Kết quả HTTP 200 gồm `course_id`, `summary`, `flashcards`, `study_questions`, `quiz`. Với chế độ yêu cầu, flashcard được hướng dẫn ghi nguồn `Kiến thức tổng hợp`, không bịa tên tài liệu/số trang. API đợi hoàn tất cả bốn thành phần trước khi trả kết quả; phía gọi cần timeout đủ cho xử lý tài liệu và LLM.
+Cả hai cách gọi LLM thật; chỉ chế độ tài liệu thêm dữ liệu vào Qdrant. Kết quả HTTP 200 ban đầu gồm `course_id`, `summary`, `study_guide`, `flashcards`, `study_questions`. `study_guide` có tiêu đề, các bước học theo thứ tự và mẹo ôn tập/tự kiểm tra. Quiz không được tạo trong request này; client gọi endpoint quiz riêng khi cần. Với chế độ yêu cầu, flashcard được hướng dẫn ghi nguồn `Kiến thức tổng hợp`, không bịa tên tài liệu/số trang. API đợi hoàn tất cả bốn phần ban đầu trước khi trả kết quả.
+
+### Tạo riêng từng phần học liệu
+
+Có thể gọi riêng từng controller; mỗi request chỉ gọi chain tương ứng và chỉ trả về phần đó. Summary, study guide, flashcard và câu hỏi học tập có endpoint riêng để tạo lại khi được phép theo gói. Quiz được tạo riêng theo yêu cầu:
+
+| Phần học liệu | Endpoint |
+|---|---|
+| Tóm tắt | `POST /api/v1/courses/{course_id}/materials/summary/generate` |
+| Hướng dẫn học tập | `POST /api/v1/courses/{course_id}/materials/study-guide/generate` |
+| Flashcard | `POST /api/v1/courses/{course_id}/materials/flashcards/generate` |
+| Câu hỏi học tập | `POST /api/v1/courses/{course_id}/materials/study-questions/generate` |
+| Quiz | `POST /api/v1/courses/{course_id}/materials/quiz/generate` |
+
+Body dùng chung có `material_source` là `document` hoặc `requirement`, cùng `instruction` mô tả phần cần tạo. Với quiz, có thể truyền thêm `question_count` từ 1 đến 15; mặc định là 5:
+
+```json
+{
+  "material_source": "document",
+  "instruction": "Tập trung vào kiến trúc Zero Trust",
+  "question_count": 10
+}
+```
+
+Với study guide, gửi yêu cầu chỉnh sửa trong `instruction`, ví dụ: `Sắp xếp thành lộ trình 7 ngày, mỗi ngày có một bài thực hành nhỏ`. Với `document`, controller truy xuất Qdrant theo đúng `course_id`; với `requirement`, chain dùng kiến thức tổng quát của mô hình và nội dung chủ đề trong `instruction`. Endpoint `/api/v1/courses/generate` tạo bốn phần ban đầu, không tạo quiz. Prompt yêu cầu đúng `question_count` và API cắt bỏ câu thừa; LLM vẫn có thể trả ít câu hơn yêu cầu. Các route riêng này hiện chưa kiểm tra JWT hoặc quota thành viên; cần hoàn tất phần đó trước khi mở cho client sử dụng.
 
 Lỗi: 415 khi đuôi file không phải PDF/DOCX, 400 khi file rỗng, 422 khi thiếu hoặc bỏ trắng trường bắt buộc, 500 khi pipeline lỗi. Đuôi file không đảm bảo nội dung hợp lệ; lỗi giải mã tài liệu hiện trả 500. Chi tiết lỗi nội bộ nằm trong log server.
 
@@ -100,4 +124,4 @@ python test_api.py
 
 Cần Qdrant đang chạy và API key hợp lệ. Script tự mở Uvicorn trên cổng localhost trống, thử requirement HTML5 độc lập rồi upload tài liệu Zero Trust trong `papers/`, gọi LLM thật (có thể phát sinh phí), kiểm tra schema và dọn file tạm. Chế độ requirement được kiểm tra không tạo collection. Collection thử riêng của chế độ tài liệu được xóa và server thử được tắt sau khi chạy. Không cần mở server trước.
 
-Kết quả riêng ở `test_results/requirement_html5.json` và `test_results/document_zero_trust.json` (`course_response.json` cũng giữ bản kết quả tài liệu); báo cáo HTTP, số học liệu, thời gian và cleanup ở `test_results/e2e_report.json`. Thư mục này không được đưa vào Git. E2E kiểm tra đủ thành phần, cả hai dạng câu ôn tập và schema; không chấm tự động độ chính xác toàn bộ nội dung hay ép chính xác số câu yêu cầu trong prompt.
+Kết quả riêng ở `test_results/requirement_html5.json`, `test_results/requirement_html5_quiz.json`, `test_results/document_zero_trust.json` và `test_results/document_zero_trust_quiz.json` (`course_response.json` cũng giữ bản kết quả ban đầu cho tài liệu); báo cáo HTTP, số học liệu, thời gian và cleanup ở `test_results/e2e_report.json`. Thư mục này không được đưa vào Git. E2E kiểm tra bốn phần ban đầu, quiz được gọi riêng, hai dạng câu ôn tập và schema; không chấm tự động độ chính xác toàn bộ nội dung hay ép chính xác số câu yêu cầu trong prompt.

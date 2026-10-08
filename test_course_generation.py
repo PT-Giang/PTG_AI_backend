@@ -14,6 +14,7 @@ import rag_service
 
 RESULTS = {
     "summary": {"title": "MQTT", "overview": "Messaging", "key_points": ["Publish/subscribe"]},
+    "study_guide": {"title": "Hướng dẫn học tập", "steps": ["Tìm hiểu broker", "Thực hành publish/subscribe"], "tips": ["Tự vẽ luồng tin nhắn"]},
     "flashcards": {"topic": "MQTT", "cards": [{"front": "Broker?", "back": "Routes messages", "source_page": "lesson.pdf:1"}]},
     "study_questions": {"title": "Practice", "questions": [{
         "type": "matching", "question": "Match", "hint": "Roles", "core_knowledge": "Messaging",
@@ -45,7 +46,7 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
         def answer(prompt):
             text = prompt.to_string()
             prompts.append(text)
-            for marker, key in (("CourseSummary", "summary"), ("FlashcardSet", "flashcards"),
+            for marker, key in (("CourseSummary", "summary"), ("StudyGuide", "study_guide"), ("FlashcardSet", "flashcards"),
                                 ("StudyQuestionSet", "study_questions"), ("QuizSet", "quiz")):
                 if marker in text:
                     return json.dumps(RESULTS[key])
@@ -85,10 +86,10 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
             result = await rag_service.generate_course_materials(None, "html5", "Tôi muốn học HTML5")
         index.assert_not_called()
         retriever.assert_not_called()
-        build.assert_called_once_with(None)
+        build.assert_called_once_with(None, rag_service.INITIAL_CHAIN_NAMES)
         self.assertEqual(result.course_id, "html5")
 
-    async def test_four_chains_run_concurrently_after_indexing_off_event_loop(self):
+    async def test_four_initial_chains_run_concurrently_after_indexing_off_event_loop(self):
         started = set()
         ready = asyncio.Event()
         main_thread = threading.get_ident()
@@ -115,7 +116,8 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(rag_service, "get_teacher_chains", return_value={key: make_chain(key) for key in RESULTS}):
             response = await rag_service.generate_course_materials("lesson.pdf", "course-1", "Explain MQTT")
         retriever.assert_called_once_with("course-1")
-        self.assertEqual(response.model_dump(), {"course_id": "course-1", **RESULTS})
+        initial_results = {key: RESULTS[key] for key in rag_service.INITIAL_CHAIN_NAMES}
+        self.assertEqual(response.model_dump(), {"course_id": "course-1", **initial_results})
 
     async def test_failure_cancels_other_chains(self):
         ready = asyncio.Event()
@@ -128,7 +130,7 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
                 if len(started) == 4:
                     ready.set()
                 await ready.wait()
-                if key == "quiz":
+                if key == "study_guide":
                     raise RuntimeError("LLM failed")
                 try:
                     await asyncio.Event().wait()
@@ -141,7 +143,7 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(rag_service, "get_teacher_chains", return_value={key: make_chain(key) for key in RESULTS}):
             with self.assertRaisesRegex(RuntimeError, "LLM failed"):
                 await asyncio.wait_for(rag_service.generate_course_materials("lesson.pdf", "course-1", "MQTT"), 5)
-        self.assertEqual(cancelled, set(RESULTS) - {"quiz"})
+        self.assertEqual(cancelled, set(rag_service.INITIAL_CHAIN_NAMES) - {"study_guide"})
 
     async def test_invalid_requirement_does_not_index(self):
         with patch.object(rag_service, "load_and_process_document") as index:

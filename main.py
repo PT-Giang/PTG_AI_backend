@@ -11,10 +11,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from controllers import routers as material_routers
 import rag_service
 import chat_service
 from chat_service import ChatRequest
-from rag_service import CourseGenerationResponse
+from rag_service import InitialCourseMaterialsResponse
 
 
 load_dotenv()
@@ -28,6 +29,9 @@ CORS_ORIGINS = [
 ]
 
 app = FastAPI(title="AI Course Backend", version="1.0.0")
+for material_router in material_routers:
+    app.include_router(material_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -92,7 +96,7 @@ async def _process_upload(file: UploadFile, course_id: str, requirement: str):
             await file.close()
 
 
-@app.post("/api/v1/courses/generate", response_model=CourseGenerationResponse)
+@app.post("/api/v1/courses/generate", response_model=InitialCourseMaterialsResponse)
 async def generate_course(
     course_id: Annotated[str, Form(min_length=1)],
     file: Annotated[UploadFile | None, File(description="Chọn tài liệu PDF/DOCX, không gửi requirement")] = None,

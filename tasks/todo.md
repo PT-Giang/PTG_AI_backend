@@ -1,5 +1,10 @@
 # Tasks: AI Backend Service
 
+## Cập nhật đầu ra học tập
+- `CourseGenerationResponse` hiện có thêm `study_guide`, gồm `title`, `steps` theo trình tự học và `tips` để ôn tập/tự kiểm tra.
+- Endpoint tạo ban đầu chỉ sinh `summary`, `study_guide`, `flashcards`, `study_questions`.
+- `quiz` chỉ được tạo khi gọi controller `/materials/quiz/generate` riêng.
+
 ## Cập nhật: hai lựa chọn đầu vào độc lập
 - [x] API nhận `course_id` và đúng một trong `file` / `requirement`; gửi cả hai hoặc không có nội dung đều trả 422.
 - [x] `requirement` là chủ đề/mục tiêu học độc lập; không cần tài liệu hay Qdrant. Bốn chain dùng kiến thức mô hình, có hướng dẫn không bịa trích dẫn tài liệu.
@@ -36,7 +41,7 @@
 **Acceptance criteria:**
 - [x] Có đầy đủ các model: `FlashcardSet`, `QuizSet`, `MatchingPair`, `StudyQuestion`, `StudyQuestionSet`, `CourseSummary`, `CourseGenerationResponse`.
 - [x] `StudyQuestion` hỗ trợ cả dạng `multiple_choice` và `matching` kèm gợi ý và kiến thức cốt lõi.
-- [x] `CourseGenerationResponse` tổng hợp toàn bộ 4 thành phần cùng `course_id`.
+- [x] `CourseGenerationResponse` tổng hợp các thành phần học liệu cùng `course_id`; hiện có thêm `study_guide`.
 **Verification:**
 - [x] Import: `.\.venv\Scripts\python.exe -c "from rag_service import CourseGenerationResponse; print('Schemas OK')"` → `Schemas OK`.
 - [x] `.\.venv\Scripts\python.exe -m unittest discover -v` → 5 tests passed; kiểm tra dữ liệu mẫu, JSON round-trip, JSON Schema và từ chối câu hỏi không hợp lệ.
@@ -70,13 +75,13 @@
 **Estimated scope:** M (1 file)
 
 ### Task 4: Xây dựng 4 AI Chains và Orchestrator Async
-**Description:** Cấu hình 4 Chains (`summary_chain`, `flashcard_chain`, `study_questions_chain`, `quiz_chain`) sử dụng `ChatOpenAI(model="deepseek-v4-flash")` và `JsonOutputParser`. Viết hàm điều phối `generate_course_materials` dùng `asyncio.gather` để sinh đồng thời 4 thành phần.
+**Description:** Cấu hình các chain (`summary`, `study_guide`, `flashcards`, `study_questions`, `quiz`) sử dụng `ChatOpenAI(model="deepseek-v4-flash")` và `JsonOutputParser`. Hàm `generate_course_materials` chỉ sinh bốn mục ban đầu; quiz được gọi qua controller riêng.
 **Acceptance criteria:**
 - [x] Mỗi chain có prompt riêng, `JsonOutputParser` và bước kiểm tra Pydantic tương ứng.
-- [x] Hàm `generate_course_materials(file_path, course_id, requirement)` điều phối toàn bộ luồng từ load doc -> Qdrant -> sinh 4 chains song song -> trả về `CourseGenerationResponse`.
+- [x] Hàm `generate_course_materials(file_path, course_id, requirement)` điều phối luồng load doc -> Qdrant -> sinh bốn chains ban đầu song song -> trả về `InitialCourseMaterialsResponse`.
 **Verification:**
 - [x] Python global chạy `-m unittest discover -v`: 18 tests passed, gồm 7 tests Task 4; import module, tạo/invoke đủ 4 chain với LLM giả lập, từ chối JSON lỗi/schema lỗi, kiểm tra chạy song song, hủy các chain còn lại khi lỗi, từ chối requirement rỗng và dừng khi index lỗi.
-**Contract:** `get_teacher_chains(retriever)` trả dict với `summary`, `flashcards`, `study_questions`, `quiz` (CLI đã cập nhật). Mỗi chain nhận chuỗi yêu cầu và trả dict đã validate. Orchestrator chạy phần đồng bộ bằng `asyncio.to_thread`, gọi 4 `ainvoke` qua `asyncio.gather`, rồi tạo `CourseGenerationResponse`. Lỗi được truyền lên caller; không trả kết quả thiếu thành phần, không xóa dữ liệu đã index.
+**Contract:** `get_teacher_chains(retriever, chain_names)` tạo toàn bộ hoặc chỉ những chain được chọn. Mỗi chain nhận chuỗi yêu cầu và trả dict đã validate. Orchestrator chạy phần đồng bộ bằng `asyncio.to_thread`, gọi bốn `ainvoke` ban đầu qua `asyncio.gather`, rồi tạo `InitialCourseMaterialsResponse`. Controller quiz gọi riêng chain `quiz`. Lỗi được truyền lên caller; không trả kết quả thiếu thành phần, không xóa dữ liệu đã index.
 **Verification scope:** Chưa gọi DeepSeek thật ở Task 4. Retrieval dùng k=6 chunks liên quan tới yêu cầu theo course_id, không đảm bảo bao phủ toàn bộ tài liệu dài.
 **Dependencies:** Task 3
 **Files likely touched:**
@@ -101,7 +106,7 @@
 **Verification:**
 - [x] Python global chạy `-m unittest discover -v`: 24 tests passed. Sáu test API import app và kiểm tra multipart thành công, dữ liệu thiếu/trắng, file sai đuôi/rỗng, health 200/503, CORS, lỗi 500 không lộ chi tiết và xóa file khi thành công/lỗi.
 - [x] Kiểm tra cú pháp `main.py` và `test_api_routes.py` thành công.
-**Contract:** Multipart `file`, `course_id`, `requirement`; response 200 có bốn thành phần học liệu. Lỗi 415/400/422 cho input, 500 cho pipeline. File tạm tên riêng trong `temp_uploads/`; khi request bị hủy, chờ xử lý hoàn tất trước khi dọn file. Hướng dẫn chạy/cấu hình ở `README.md`.
+**Contract:** Multipart `file`, `course_id`, `requirement`; response 200 có bốn mục ban đầu, không có quiz. Lỗi 415/400/422 cho input, 500 cho pipeline. File tạm tên riêng trong `temp_uploads/`; khi request bị hủy, chờ xử lý hoàn tất trước khi dọn file. Hướng dẫn chạy/cấu hình ở `README.md`.
 **Verification scope:** Test HTTP qua FastAPI TestClient với pipeline và kết nối health giả lập; chưa chạy HTTP E2E gọi DeepSeek thật (Task 6).
 **Dependencies:** Task 4
 **Files likely touched:**

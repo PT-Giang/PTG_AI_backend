@@ -91,12 +91,30 @@ class CourseSummary(BaseModel):
     key_points: List[str] = Field(description="Các ý chính và kiến thức trọng tâm")
 
 
+class StudyGuide(BaseModel):
+    title: str = Field(description="Tiêu đề mục hướng dẫn học tập")
+    steps: List[str] = Field(description="Các bước học theo thứ tự, có hoạt động cụ thể")
+    tips: List[str] = Field(description="Mẹo ôn tập và tự kiểm tra kiến thức")
+
+
 class CourseGenerationResponse(BaseModel):
     course_id: str = Field(description="Mã khóa học sở hữu học liệu")
     summary: CourseSummary = Field(description="Tóm tắt khóa học")
+    study_guide: StudyGuide = Field(description="Hướng dẫn học tập theo trình tự")
     flashcards: FlashcardSet = Field(description="Bộ thẻ ghi nhớ")
     study_questions: StudyQuestionSet = Field(description="Bộ câu hỏi ôn tập")
-    quiz: QuizSet = Field(description="Bộ đề kiểm tra trắc nghiệm")
+    quiz: QuizSet | None = None
+
+
+class InitialCourseMaterialsResponse(BaseModel):
+    course_id: str = Field(description="Mã khóa học sở hữu học liệu")
+    summary: CourseSummary = Field(description="Tóm tắt khóa học")
+    study_guide: StudyGuide = Field(description="Hướng dẫn học tập theo trình tự")
+    flashcards: FlashcardSet = Field(description="Bộ thẻ ghi nhớ")
+    study_questions: StudyQuestionSet = Field(description="Bộ câu hỏi ôn tập")
+
+
+INITIAL_CHAIN_NAMES = ("summary", "study_guide", "flashcards", "study_questions")
 
 
 # ==========================================
@@ -241,32 +259,47 @@ def get_teacher_chains(retriever=None):
     )
     summary_chain = _build_teacher_chain(
         retriever, llm, CourseSummary,
-        "Tóm tắt nội dung liên quan tới yêu cầu: đặt title rõ ràng, overview mạch lạc, "
-        "key_points là các ý chính không trùng nhau. Giữ thuật ngữ và quan hệ giữa các khái niệm.",
+        "Đóng vai trò Chuyên gia Tổng hợp Kiến thức. Xây dựng 'CourseSummary' cô đọng và hệ thống hóa. "
+        "Yêu cầu: (1) 'title' phản ánh chính xác trọng tâm; (2) 'overview' tóm tắt mục tiêu và giá trị cốt lõi "
+        "của tài liệu trong 2-3 câu mạch lạc; (3) 'key_points' là danh sách các luận điểm độc lập, không trùng lặp. "
+        "Bắt buộc giữ nguyên các thuật ngữ chuyên môn và giải thích rõ mối quan hệ nhân quả/logic giữa các khái niệm."
+    )
+    study_guide_chain = _build_teacher_chain(
+        retriever, llm, StudyGuide,
+        "Đóng vai trò Chuyên gia Thiết kế Đào tạo. Xây dựng 'StudyGuide' theo lộ trình thực tế, có tính hành động cao. "
+        "Yêu cầu: (1) 'title' đặt là 'Hướng dẫn học tập'; (2) 'steps' phân cấp nghiêm ngặt theo tiến trình: "
+        "Nền tảng -> Thực hành -> Vận dụng nâng cao. Mỗi bước phải mô tả rõ người học cần làm hành động gì và "
+        "kết quả đầu ra mong đợi; (3) 'tips' cung cấp mẹo tự kiểm tra, chiến lược ôn tập và cảnh báo các cạm bẫy/sai lầm "
+        "tư duy thường gặp (tuyệt đối KHÔNG viết lại các nội dung đã có trong steps)."
     )
     flashcard_chain = _build_teacher_chain(
         retriever, llm, FlashcardSet,
-        "Tạo bộ flashcard giúp ghi nhớ. Mỗi card chỉ hỏi một khái niệm; front ngắn gọn, "
-        "back giải thích chính xác. Nếu không yêu cầu số lượng, tạo tối đa 10 thẻ phù hợp nội dung.",
+        "Đóng vai trò Chuyên gia Kỹ năng Ghi nhớ. Tạo 'FlashcardSet' tối ưu cho phương pháp Lặp lại ngắt quãng (Spaced Repetition). "
+        "Yêu cầu: Mỗi thẻ giải quyết DUY NHẤT một khái niệm. 'front' là câu hỏi hoặc từ khóa cực kỳ ngắn gọn (dưới 15 từ). "
+        "'back' là định nghĩa hoặc giải thích đi thẳng vào bản chất, súc tích và dễ nhớ. "
+        "Nếu không có yêu cầu cụ thể, hãy trích xuất tất cả khái niệm quan trọng nhất để làm thẻ."
     )
     study_questions_chain = _build_teacher_chain(
         retriever, llm, StudyQuestionSet,
-        "Tạo bộ ôn tập gồm cả multiple_choice và matching theo chủ đề học. "
-        "Mỗi câu có question, hint giúp suy luận và core_knowledge giải thích kiến thức cốt lõi. "
-        "multiple_choice có đúng 4 options khác nhau và correct_answer khớp chính xác một option, "
-        "pairs=null. matching có pairs là các cặp term-definition đúng, options=null và "
-        "correct_answer=null; dùng ít nhất hai cặp để bài ghép có ý nghĩa. "
-        "Nếu không yêu cầu số lượng, tạo 3 câu trắc nghiệm và 2 bài ghép cặp.",
+        "Đóng vai trò Chuyên gia Sư phạm. Xây dựng 'StudyQuestionSet' với các ràng buộc cấu trúc dữ liệu nghiêm ngặt. "
+        "Mỗi câu hỏi phải đi kèm 'hint' (gợi ý phương pháp suy luận) và 'core_knowledge' (giải thích bản chất kiến thức). "
+        "(1) Định dạng multiple_choice: Phải có đúng 4 'options', 'correct_answer' phải trùng khớp nguyên văn 100% "
+        "với một option, ép buộc 'pairs' = null. "
+        "(2) Định dạng matching: Phải có ít nhất 3 cặp 'pairs' (term - definition) có tính logic và dễ gây nhầm lẫn để tăng độ khó, "
+        "ép buộc 'options' = null và 'correct_answer' = null. ",
     )
     quiz_chain = _build_teacher_chain(
         retriever, llm, QuizSet,
-        "Tạo đề trắc nghiệm đánh giá hiểu bài, từ nhận biết đến vận dụng. Mỗi câu có đúng "
-        "4 options khác nhau, chỉ một đáp án đúng; correct_answer phải là nguyên văn một option. "
-        "explanation giải thích đáp án dựa trên nguồn kiến thức được phép ở trên. Tránh câu mơ hồ hoặc nhiều đáp án đúng. "
-        "Nếu không yêu cầu số lượng, tạo 5 câu hỏi.",
+        "Đóng vai trò Chuyên gia Khảo thí. Thiết kế 'QuizSet' đo lường năng lực theo Thang nhận thức Bloom "
+        "(từ Nhận biết, Thông hiểu đến Vận dụng). "
+        "Yêu cầu kỹ thuật: (1) Mỗi câu có đúng 4 'options' khác biệt, KHÔNG dùng các lựa chọn lười biếng như 'Tất cả đều đúng/sai'. "
+        "(2) Chỉ có duy nhất một đáp án đúng, và 'correct_answer' phải trích xuất nguyên văn từ 'options'. "
+        "(3) 'explanation' không chỉ giải thích vì sao đáp án đúng, mà phải phân tích lỗi sai của các phương án nhiễu (distractors). "
+        "Đảm bảo câu hỏi có ngữ cảnh, không mơ hồ. Độ khó tăng dần",
     )
     return {
         "summary": summary_chain,
+        "study_guide": study_guide_chain,
         "flashcards": flashcard_chain,
         "study_questions": study_questions_chain,
         "quiz": quiz_chain,
@@ -275,8 +308,8 @@ def get_teacher_chains(retriever=None):
 
 async def generate_course_materials(
     file_path: str | Path | None, course_id: str, requirement: str,
-) -> CourseGenerationResponse:
-    """Sinh học liệu theo yêu cầu; chỉ dùng RAG khi có file_path."""
+) -> InitialCourseMaterialsResponse:
+    """Index tài liệu nếu có rồi sinh bốn phần ban đầu; quiz được tạo riêng."""
     _validate_course_id(course_id)
     if not isinstance(requirement, str) or not requirement.strip():
         raise ValueError("requirement must be a non-empty string")
@@ -284,7 +317,8 @@ async def generate_course_materials(
     if file_path is not None:
         await asyncio.to_thread(load_and_process_document, file_path, course_id)
         retriever = await asyncio.to_thread(get_course_retriever, course_id)
-    chains = await asyncio.to_thread(get_teacher_chains, retriever)
+    chains = await asyncio.to_thread(get_teacher_chains, retriever, INITIAL_CHAIN_NAMES)
+    chains = {name: chains[name] for name in INITIAL_CHAIN_NAMES}
     tasks = [asyncio.create_task(chain.ainvoke(requirement)) for chain in chains.values()]
     try:
         results = await asyncio.gather(*tasks)
@@ -293,7 +327,7 @@ async def generate_course_materials(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    return CourseGenerationResponse(course_id=course_id, **dict(zip(chains, results)))
+    return InitialCourseMaterialsResponse(course_id=course_id, **dict(zip(chains.keys(), results)))
 
 # ==========================================
 # 4. GIAO DIỆN CHẠY CHƯƠNG TRÌNH

@@ -37,6 +37,7 @@ class SchemaTests(unittest.TestCase):
         payload = {
             "course_id": "course-1",
             "summary": {"title": "MQTT", "overview": "Messaging protocol", "key_points": ["Publish/subscribe"]},
+            "study_guide": {"title": "Hướng dẫn học tập", "steps": ["Học broker", "Thực hành topic"], "tips": ["Tự vẽ sơ đồ"]},
             "flashcards": {"topic": "MQTT", "cards": [{"front": "Broker?", "back": "Routes messages", "source_page": "lesson.pdf:1"}]},
             "study_questions": {"title": "Practice", "questions": [multiple_choice(), matching()]},
             "quiz": {"title": "Quiz", "questions": [{"question": "Protocol?", "options": ["MQTT", "HTTP", "FTP", "SMTP"], "correct_answer": "MQTT", "explanation": "Publish/subscribe"}]},
@@ -45,7 +46,7 @@ class SchemaTests(unittest.TestCase):
         restored = CourseGenerationResponse.model_validate_json(result.model_dump_json())
         self.assertEqual(restored, result)
         self.assertEqual(restored.study_questions.questions[1].pairs[0].term, "Broker")
-        self.assertEqual(set(result.model_dump()), {"course_id", "summary", "flashcards", "study_questions", "quiz"})
+        self.assertEqual(set(result.model_dump()), {"course_id", "summary", "study_guide", "flashcards", "study_questions", "quiz"})
 
     def test_multiple_choice_rejects_incomplete_or_inconsistent_answers(self):
         for changes in (
@@ -72,7 +73,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_json_schema_exposes_all_course_components(self):
         schema = CourseGenerationResponse.model_json_schema()
-        self.assertEqual(set(schema["required"]), {"course_id", "summary", "flashcards", "study_questions", "quiz"})
+        self.assertEqual(set(schema["required"]), {"course_id", "summary", "study_guide", "flashcards", "study_questions"})
         self.assertEqual(schema["$defs"]["StudyQuestion"]["properties"]["type"]["enum"], ["multiple_choice", "matching"])
 
 
