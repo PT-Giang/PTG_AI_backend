@@ -22,6 +22,7 @@ RESULTS = {
         "options": None, "correct_answer": None,
     }]},
     "quiz": {"title": "Quiz", "questions": [{"question": "Protocol?", "options": ["MQTT", "HTTP", "FTP", "SMTP"], "correct_answer": "MQTT", "explanation": "Publish/subscribe"}]},
+    "podcast": {"title": "MQTT cơ bản", "script": "Xin chào, hôm nay ta học MQTT.", "duration_seconds": 90},
 }
 
 
@@ -40,6 +41,10 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("kiến thức", prompts[0])
         self.assertNotIn("Chỉ dùng kiến thức trong ngữ cảnh", prompts[0])
 
+    def test_chain_factory_can_select_one_material_chain(self):
+        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(lambda _: "{}")):
+            chains = rag_service.get_teacher_chains(None, ["podcast"])
+        self.assertEqual(set(chains), {"podcast"})
     async def test_all_chains_use_context_requirement_and_parse_json(self):
         prompts = []
 
@@ -47,7 +52,7 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
             text = prompt.to_string()
             prompts.append(text)
             for marker, key in (("CourseSummary", "summary"), ("StudyGuide", "study_guide"), ("FlashcardSet", "flashcards"),
-                                ("StudyQuestionSet", "study_questions"), ("QuizSet", "quiz")):
+                                ("StudyQuestionSet", "study_questions"), ("QuizSet", "quiz"), ("PodcastEpisode", "podcast")):
                 if marker in text:
                     return json.dumps(RESULTS[key])
             raise AssertionError("Prompt does not identify its schema")
@@ -111,13 +116,18 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
                 return RESULTS[key]
             return RunnableLambda(run)
 
+        source_documents = [Document(
+            page_content="MQTT context", metadata={"source_name": "lesson.pdf", "page": 1},
+        )]
+        course_retriever = RunnableLambda(lambda _: source_documents)
         with patch.object(rag_service, "load_and_process_document", side_effect=index), \
-             patch.object(rag_service, "get_course_retriever") as retriever, \
+             patch.object(rag_service, "get_course_retriever", return_value=course_retriever) as retriever, \
              patch.object(rag_service, "get_teacher_chains", return_value={key: make_chain(key) for key in RESULTS}):
             response = await rag_service.generate_course_materials("lesson.pdf", "course-1", "Explain MQTT")
         retriever.assert_called_once_with("course-1")
         initial_results = {key: RESULTS[key] for key in rag_service.INITIAL_CHAIN_NAMES}
-        self.assertEqual(response.model_dump(), {"course_id": "course-1", **initial_results})
+        self.assertEqual(response.model_dump(exclude={"sources"}), {"course_id": "course-1", **initial_results})
+        self.assertEqual(response.sources[0].title, "lesson.pdf")
 
     async def test_failure_cancels_other_chains(self):
         ready = asyncio.Event()

@@ -1,9 +1,11 @@
 import asyncio
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import List, Literal
+from uuid import UUID
 
 from dotenv import load_dotenv
 from langchain_community.document_loaders import UnstructuredFileLoader
@@ -85,6 +87,22 @@ class StudyQuestionSet(BaseModel):
     questions: List[StudyQuestion] = Field(description="Câu hỏi trắc nghiệm và ghép cặp kèm gợi ý")
 
 
+class PodcastEpisode(BaseModel):
+    title: str = Field(min_length=1, max_length=240, description="Tiêu đề podcast")
+    script: str = Field(min_length=1, max_length=50000, description="Kịch bản podcast dạng văn bản")
+    duration_seconds: int | None = Field(default=None, ge=0, le=7200, description="Thời lượng ước tính nếu có")
+
+
+class GenerationSource(BaseModel):
+    source_type: Literal["document", "web"]
+    title: str = Field(min_length=1, max_length=240)
+    url: str | None = None
+    excerpt: str = Field(default="", max_length=20000)
+    retrieved_at: datetime
+    is_mock: bool = False
+    document_id: UUID | None = None
+
+
 class CourseSummary(BaseModel):
     title: str = Field(description="Tiêu đề phần tóm tắt khóa học")
     overview: str = Field(description="Tóm tắt tổng quan nội dung tài liệu")
@@ -95,6 +113,51 @@ class StudyGuide(BaseModel):
     title: str = Field(description="Tiêu đề mục hướng dẫn học tập")
     steps: List[str] = Field(description="Các bước học theo thứ tự, có hoạt động cụ thể")
     tips: List[str] = Field(description="Mẹo ôn tập và tự kiểm tra kiến thức")
+
+
+class CourseSummaryGenerationResponse(CourseSummary):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+class StudyGuideGenerationResponse(StudyGuide):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+class FlashcardSetGenerationResponse(FlashcardSet):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+class StudyQuestionSetGenerationResponse(StudyQuestionSet):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+class QuizSetGenerationResponse(QuizSet):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+class PodcastGenerationResponse(PodcastEpisode):
+    sources: List[GenerationSource] = Field(default_factory=list)
+
+
+def build_source_metadata(documents: List[Document]) -> List[GenerationSource]:
+    sources = []
+    retrieved_at = datetime.now(timezone.utc)
+    for document in documents[:30]:
+        metadata = document.metadata or {}
+        raw_title = str(metadata.get("source_name") or metadata.get("source") or "Tài liệu học tập")
+        title = PurePosixPath(raw_title.replace("\\", "/")).name[:240] or "Tài liệu học tập"
+        page = metadata.get("page")
+        excerpt = document.page_content.strip()
+        if page is not None:
+            excerpt = f"Trang {page}: {excerpt}"
+        source_url = metadata.get("source_url")
+        source_type = "web" if isinstance(source_url, str) and source_url.startswith(("https://", "http://")) else "document"
+        sources.append(GenerationSource(
+            source_type=source_type, title=title, url=source_url if source_type == "web" else None,
+            excerpt=excerpt[:20000], retrieved_at=retrieved_at, is_mock=False,
+            document_id=metadata.get("document_id"),
+        ))
+    return sources
 
 
 class CourseGenerationResponse(BaseModel):
@@ -112,6 +175,7 @@ class InitialCourseMaterialsResponse(BaseModel):
     study_guide: StudyGuide = Field(description="Hướng dẫn học tập theo trình tự")
     flashcards: FlashcardSet = Field(description="Bộ thẻ ghi nhớ")
     study_questions: StudyQuestionSet = Field(description="Bộ câu hỏi ôn tập")
+    sources: List[GenerationSource] = Field(default_factory=list)
 
 
 INITIAL_CHAIN_NAMES = ("summary", "study_guide", "flashcards", "study_questions")
@@ -169,7 +233,7 @@ def _validate_course_id(course_id: str) -> None:
         raise ValueError("course_id must be a non-empty string")
 
 
-def load_and_process_document(file_path: str | Path, course_id: str) -> List[Document]:
+def load_and_process_document(file_path: str | Path, course_id: str, source_name: str | None = None) -> List[Document]:
     """Đọc PDF/DOCX, thêm chunks của khóa học vào Qdrant và trả về chunks.
 
     Mỗi lần gọi thêm dữ liệu; không thay thế dữ liệu cũ của bất kỳ khóa học nào.
@@ -183,6 +247,10 @@ def load_and_process_document(file_path: str | Path, course_id: str) -> List[Doc
 
     loader = UnstructuredFileLoader(str(path), strategy="fast", languages=["vie", "eng"])
     docs = [doc for doc in loader.load() if doc.page_content.strip()]
+    if source_name:
+        display_name = Path(source_name.replace("\\", "/")).name
+        for doc in docs:
+            doc.metadata["source_name"] = display_name
     if not docs:
         raise ValueError("Document contains no extractable text")
     chunker = SemanticChunker(
@@ -248,8 +316,8 @@ def _build_teacher_chain(retriever, llm, schema, instructions):
     )
 
 
-def get_teacher_chains(retriever=None):
-    """Trả bốn chains nhận yêu cầu dạng chuỗi, xuất dict đã kiểm tra schema."""
+def get_teacher_chains(retriever=None, chain_names=None):
+    """Tạo chains sinh học liệu và lọc theo tên nếu được yêu cầu."""
     load_dotenv()
     llm = ChatOpenAI(
         model="deepseek-v4-flash",
@@ -275,7 +343,7 @@ def get_teacher_chains(retriever=None):
     flashcard_chain = _build_teacher_chain(
         retriever, llm, FlashcardSet,
         "Đóng vai trò Chuyên gia Kỹ năng Ghi nhớ. Tạo 'FlashcardSet' tối ưu cho phương pháp Lặp lại ngắt quãng (Spaced Repetition). "
-        "Yêu cầu: Mỗi thẻ giải quyết DUY NHẤT một khái niệm. 'front' là câu hỏi hoặc từ khóa cực kỳ ngắn gọn (dưới 15 từ). "
+        "Yêu cầu: Mỗi thẻ giải quyết DUY NHẤT một khái niệm. 'front' là từ khóa cực kỳ ngắn gọn . "
         "'back' là định nghĩa hoặc giải thích đi thẳng vào bản chất, súc tích và dễ nhớ. "
         "Nếu không có yêu cầu cụ thể, hãy trích xuất tất cả khái niệm quan trọng nhất để làm thẻ."
     )
@@ -297,26 +365,39 @@ def get_teacher_chains(retriever=None):
         "(3) 'explanation' không chỉ giải thích vì sao đáp án đúng, mà phải phân tích lỗi sai của các phương án nhiễu (distractors). "
         "Đảm bảo câu hỏi có ngữ cảnh, không mơ hồ. Độ khó tăng dần",
     )
-    return {
+    chains = {
         "summary": summary_chain,
         "study_guide": study_guide_chain,
         "flashcards": flashcard_chain,
         "study_questions": study_questions_chain,
         "quiz": quiz_chain,
+        "podcast": _build_teacher_chain(
+            retriever, llm, PodcastEpisode,
+            "Đóng vai biên tập viên podcast giáo dục. Viết một kịch bản podcast tiếng Việt dễ nghe, có mở đầu, giải thích tuần tự, ví dụ và phần kết ôn lại. Chỉ dùng dữ liệu trong ngữ cảnh nếu có; không bịa trích dẫn.",
+        ),
     }
+    if chain_names is None:
+        return chains
+    return {name: chains[name] for name in chain_names}
 
 
 async def generate_course_materials(
-    file_path: str | Path | None, course_id: str, requirement: str,
+    file_path: str | Path | None, course_id: str, requirement: str, source_name: str | None = None,
 ) -> InitialCourseMaterialsResponse:
     """Index tài liệu nếu có rồi sinh bốn phần ban đầu; quiz được tạo riêng."""
     _validate_course_id(course_id)
     if not isinstance(requirement, str) or not requirement.strip():
         raise ValueError("requirement must be a non-empty string")
+    documents = []
     retriever = None
     if file_path is not None:
-        await asyncio.to_thread(load_and_process_document, file_path, course_id)
+        if source_name is None:
+            await asyncio.to_thread(load_and_process_document, file_path, course_id)
+        else:
+            await asyncio.to_thread(load_and_process_document, file_path, course_id, source_name)
         retriever = await asyncio.to_thread(get_course_retriever, course_id)
+        documents = await asyncio.to_thread(retriever.invoke, requirement)
+        retriever = RunnableLambda(lambda _: documents)
     chains = await asyncio.to_thread(get_teacher_chains, retriever, INITIAL_CHAIN_NAMES)
     chains = {name: chains[name] for name in INITIAL_CHAIN_NAMES}
     tasks = [asyncio.create_task(chain.ainvoke(requirement)) for chain in chains.values()]
@@ -327,7 +408,10 @@ async def generate_course_materials(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    return InitialCourseMaterialsResponse(course_id=course_id, **dict(zip(chains.keys(), results)))
+    return InitialCourseMaterialsResponse(
+        course_id=course_id, **dict(zip(chains.keys(), results)),
+        sources=build_source_metadata(documents),
+    )
 
 # ==========================================
 # 4. GIAO DIỆN CHẠY CHƯƠNG TRÌNH

@@ -31,11 +31,12 @@ class APIRouteTests(unittest.TestCase):
     def test_upload_returns_all_components_and_removes_file(self):
         paths = []
 
-        async def generate(path, course_id, requirement):
+        async def generate(path, course_id, requirement, source_name):
             paths.append(path)
             self.assertEqual(path.parent, self.uploads)
             self.assertEqual(path.read_bytes(), b"sample document")
             self.assertEqual((course_id, requirement), ("course-1", main.DOCUMENT_REQUIREMENT))
+            self.assertTrue(source_name.endswith(("lesson.pdf", "lesson.DOCX")))
             return CourseGenerationResponse(course_id=course_id, **RESULTS)
 
         with patch.object(main.rag_service, "generate_course_materials", side_effect=generate):
@@ -43,7 +44,7 @@ class APIRouteTests(unittest.TestCase):
                 response = self.post(name)
                 self.assertEqual(response.status_code, 200, response.text)
                 initial_results = {key: RESULTS[key] for key in main.rag_service.INITIAL_CHAIN_NAMES}
-                self.assertEqual(response.json(), {"course_id": "course-1", **initial_results})
+                self.assertEqual(response.json(), {"course_id": "course-1", **initial_results, "sources": []})
                 self.assertEqual(list(self.uploads.iterdir()), [])
         self.assertNotEqual(paths[0], paths[1])
 
@@ -95,6 +96,44 @@ class APIRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["access-control-allow-origin"], main.CORS_ORIGINS[0])
 
+    def test_podcast_route_returns_script_and_source_metadata(self):
+        result = {
+            "title": "MQTT cơ bản",
+            "script": "Xin chào, hôm nay ta học MQTT.",
+            "duration_seconds": 90,
+            "sources": [{
+                "source_type": "document", "title": "lesson.pdf", "url": None,
+                "excerpt": "Trang 1: MQTT dùng mô hình publish/subscribe.",
+                "retrieved_at": "2026-10-14T12:00:00Z", "is_mock": False, "document_id": None,
+            }],
+        }
+        with patch("controllers.podcast_controller.generate_one_material", new=AsyncMock(return_value=result)):
+            response = self.client.post(
+                "/api/v1/courses/course-1/materials/podcast/generate",
+                json={"material_source": "document", "instruction": "Giải thích MQTT"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["script"], result["script"])
+        self.assertEqual(response.json()["sources"][0]["title"], "lesson.pdf")
+
+    def test_individual_material_routes_include_source_metadata_and_podcast(self):
+        schema = self.client.get("/openapi.json").json()
+        paths = schema["paths"]
+        podcast_path = "/api/v1/courses/{course_id}/materials/podcast/generate"
+        self.assertIn(podcast_path, paths)
+        for path in (
+            "/api/v1/courses/{course_id}/materials/summary/generate",
+            "/api/v1/courses/{course_id}/materials/study-guide/generate",
+            "/api/v1/courses/{course_id}/materials/flashcards/generate",
+            "/api/v1/courses/{course_id}/materials/study-questions/generate",
+            "/api/v1/courses/{course_id}/materials/quiz/generate",
+            podcast_path,
+        ):
+            with self.subTest(path=path):
+                operation = paths[path]["post"]
+                schema_ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+                response_name = schema_ref.rsplit("/", 1)[-1]
+                self.assertIn("sources", schema["components"]["schemas"][response_name]["properties"])
 
 if __name__ == "__main__":
     unittest.main()

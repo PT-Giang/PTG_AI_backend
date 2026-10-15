@@ -87,7 +87,7 @@ async def _process_upload(file: UploadFile, course_id: str, requirement: str):
         await asyncio.to_thread(_save_upload, file, path)
         if path.stat().st_size == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
-        return await rag_service.generate_course_materials(path, course_id, requirement)
+        return await rag_service.generate_course_materials(path, course_id, requirement, file.filename)
     finally:
         try:
             if path is not None:

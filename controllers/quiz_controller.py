@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from pydantic import Field
 
 from controllers.common import ChainGenerationRequest, generate_one_material
-from rag_service import QuizSet
+from rag_service import QuizSetGenerationResponse
 
 
 router = APIRouter(tags=["quiz"])
@@ -14,7 +14,7 @@ class QuizGenerationRequest(ChainGenerationRequest):
 
 @router.post(
     "/api/v1/courses/{course_id}/materials/quiz/generate",
-    response_model=QuizSet,
+    response_model=QuizSetGenerationResponse,
 )
 async def generate_quiz(course_id: str, payload: QuizGenerationRequest):
     request_with_count = payload.model_copy(update={

@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from rag_service import CourseGenerationResponse, StudyQuestion
+from rag_service import CourseGenerationResponse, GenerationSource, PodcastGenerationResponse, StudyQuestion
 
 
 def multiple_choice(**changes):
@@ -47,6 +47,23 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(restored, result)
         self.assertEqual(restored.study_questions.questions[1].pairs[0].term, "Broker")
         self.assertEqual(set(result.model_dump()), {"course_id", "summary", "study_guide", "flashcards", "study_questions", "quiz"})
+
+    def test_podcast_response_has_typed_script_and_retrieved_sources(self):
+        response = PodcastGenerationResponse.model_validate({
+            "title": "MQTT cơ bản",
+            "script": "Mở đầu. Nội dung chính. Kết luận.",
+            "duration_seconds": 120,
+            "sources": [{
+                "source_type": "document", "title": "lesson.pdf", "url": None,
+                "excerpt": "Trang 2: MQTT dùng broker.",
+                "retrieved_at": "2026-10-14T12:00:00Z", "is_mock": False,
+            }],
+        })
+        self.assertEqual(response.script, "Mở đầu. Nội dung chính. Kết luận.")
+        self.assertEqual(response.sources[0].source_type, "document")
+        self.assertEqual(response.sources[0].title, "lesson.pdf")
+        self.assertFalse(response.sources[0].is_mock)
+        self.assertEqual(GenerationSource.model_fields["document_id"].default, None)
 
     def test_multiple_choice_rejects_incomplete_or_inconsistent_answers(self):
         for changes in (

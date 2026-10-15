@@ -48,8 +48,13 @@ Có thể gọi riêng từng controller; mỗi request chỉ gọi chain tươn
 | Flashcard | `POST /api/v1/courses/{course_id}/materials/flashcards/generate` |
 | Câu hỏi học tập | `POST /api/v1/courses/{course_id}/materials/study-questions/generate` |
 | Quiz | `POST /api/v1/courses/{course_id}/materials/quiz/generate` |
+| Podcast | `POST /api/v1/courses/{course_id}/materials/podcast/generate` |
 
-Body dùng chung có `material_source` là `document` hoặc `requirement`, cùng `instruction` mô tả phần cần tạo. Với quiz, có thể truyền thêm `question_count` từ 1 đến 15; mặc định là 5:
+Các API tạo riêng giữ nguyên nội dung output và bổ sung `sources` gồm `source_type`, `title`, `url`, `excerpt`, `retrieved_at`, `is_mock`, `document_id`. Metadata lấy từ các đoạn thực tế được truy xuất ở Qdrant; trang được ghi trong `excerpt`. Chế độ `material_source=requirement` trả `sources: []`; API không tự tìm web và không tạo citation giả. `document_id` có thể `null` nếu metadata lúc nạp tài liệu chưa có ID Backend.
+
+Podcast dùng chung request `material_source` và `instruction`; response có `title`, `script`, `duration_seconds` (nullable) và `sources`. Endpoint hiện sinh kịch bản văn bản, chưa tạo audio.
+
+Body dùng chung có `material_source` là `document` hoặc `requirement`, cùng `instruction` mô tả phần cần tạo. Với quiz bắt buộc phải truyền thêm `question_count` từ 1 đến 15 cho tài khoản standard; Nếu là tài khoản plus thì có thể truyền trên 15.
 
 ```json
 {
