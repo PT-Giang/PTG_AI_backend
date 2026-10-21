@@ -8,8 +8,11 @@ from typing import Annotated
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from uuid import UUID
 
 from controllers import routers as material_routers
 import rag_service
@@ -38,6 +41,49 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError):
+    """Log schema errors without echoing user document text or other submitted values."""
+    safe_errors = [
+        {
+            "loc": [str(part) for part in error.get("loc", ())],
+            "msg": str(error.get("msg", "Invalid value")),
+            "type": str(error.get("type", "validation_error")),
+        }
+        for error in exc.errors()
+    ]
+    logger.warning("Invalid request payload for %s: %s", request.url.path, safe_errors)
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
+
+
+class IndexDocumentRequest(BaseModel):
+    document_id: UUID
+    source_name: str = Field(min_length=1, max_length=240)
+    text: str = Field(min_length=1, max_length=1_500_000)
+
+
+@app.post("/api/v1/courses/{course_id}/documents/index")
+async def index_document(course_id: str, payload: IndexDocumentRequest):
+    if not payload.source_name.strip() or not payload.text.strip():
+        raise HTTPException(status_code=422, detail="source_name and text must not be blank")
+    try:
+        count = await asyncio.to_thread(
+            rag_service.index_text_document,
+            course_id,
+            payload.document_id,
+            payload.source_name,
+            payload.text,
+        )
+    except ValueError as error:
+        logger.warning(
+            "Document indexing rejected for document %s: %s",
+            payload.document_id,
+            str(error)[:240],
+        )
+        raise HTTPException(status_code=422, detail="Document could not be indexed") from error
+    return {"course_id": course_id, "document_id": str(payload.document_id), "chunk_count": count}
 
 
 @app.exception_handler(Exception)
@@ -101,14 +147,23 @@ async def generate_course(
     course_id: Annotated[str, Form(min_length=1)],
     file: Annotated[UploadFile | None, File(description="Chọn tài liệu PDF/DOCX, không gửi requirement")] = None,
     requirement: Annotated[str | None, Form(description="Hôm nay bạn muốn học gì? Không gửi file")] = None,
+    content: Annotated[str | None, Form(description="Ghi chú hoặc thuật ngữ dùng làm nguồn học liệu")] = None,
+    document_id: Annotated[UUID | None, Form()] = None,
+    source_name: Annotated[str | None, Form()] = None,
 ):
     if not course_id.strip():
         if file is not None:
             await file.close()
         raise HTTPException(status_code=422, detail="course_id must not be blank")
-    if file is not None and requirement is not None:
-        await file.close()
-        raise HTTPException(status_code=422, detail="Choose either file or requirement, not both")
+    supplied = sum(value is not None for value in (file, requirement, content))
+    if supplied != 1:
+        if file is not None:
+            await file.close()
+        raise HTTPException(status_code=422, detail="Choose exactly one of file, requirement, or content")
+    if content is not None:
+        if document_id is None or source_name is None or not content.strip() or not source_name.strip():
+            raise HTTPException(status_code=422, detail="content requires document_id and source_name")
+        return await rag_service.generate_course_materials_from_text(course_id, document_id, source_name, content)
     if file is None:
         if requirement is None or not requirement.strip():
             raise HTTPException(status_code=422, detail="Provide either a file or a non-blank requirement")

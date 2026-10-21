@@ -21,7 +21,7 @@ RESULTS = {
         "pairs": [{"term": "Broker", "definition": "Routes messages"}],
         "options": None, "correct_answer": None,
     }]},
-    "quiz": {"title": "Quiz", "questions": [{"question": "Protocol?", "options": ["MQTT", "HTTP", "FTP", "SMTP"], "correct_answer": "MQTT", "explanation": "Publish/subscribe"}]},
+    "quiz": {"title": "Quiz", "questions": [{"type": "multiple_choice", "question": "Protocol?", "options": ["MQTT", "HTTP", "FTP", "SMTP"], "correct_answer": "MQTT", "explanation": "Publish/subscribe"}]},
     "podcast": {"title": "MQTT cơ bản", "script": "Xin chào, hôm nay ta học MQTT.", "duration_seconds": 90},
 }
 

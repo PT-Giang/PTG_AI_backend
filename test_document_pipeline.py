@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 from unittest.mock import patch
 
 from langchain_core.documents import Document
@@ -85,6 +86,18 @@ class DocumentPipelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 rag_service.load_and_process_document(path, "course-a")
         self.assertEqual(self.client.count("courses").count, 0)
+
+    def test_text_indexing_scopes_retrieval_to_the_selected_document(self):
+        first_id, second_id = uuid4(), uuid4()
+        rag_service.index_text_document("course-a", first_id, "first.txt", "MQTT broker routes messages.")
+        rag_service.index_text_document("course-a", second_id, "second.txt", "HTTP uses request and response.")
+
+        results = rag_service.get_course_retriever("course-a", document_id=first_id).invoke("protocol")
+
+        self.assertTrue(results)
+        self.assertTrue(all(result.metadata["document_id"] == str(first_id) for result in results))
+        self.assertEqual(results[0].metadata["source_name"], "first.txt")
+        self.assertEqual(rag_service.get_course_retriever("course-a", document_id=uuid4()).invoke("protocol"), [])
 
 
 class VectorStoreTests(unittest.TestCase):

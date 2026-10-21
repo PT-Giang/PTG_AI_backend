@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import List, Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from dotenv import load_dotenv
 from langchain_community.document_loaders import UnstructuredFileLoader
@@ -35,10 +35,22 @@ class FlashcardSet(BaseModel):
     cards: List[Flashcard] = Field(description="Danh sách các flashcard")
 
 class QuizQuestion(BaseModel):
+    type: Literal["multiple_choice", "short_answer"] = "multiple_choice"
     question: str = Field(description="Câu hỏi kiểm tra")
-    options: List[str] = Field(description="4 phương án lựa chọn A, B, C, D")
+    options: List[str] | None = Field(default=None, description="4 phương án cho câu trắc nghiệm; null cho câu trả lời ngắn")
     correct_answer: str = Field(description="Đáp án đúng (chính xác văn bản phương án)")
     explanation: str = Field(description="Giải thích chi tiết lý do chọn đáp án này dựa trên tài liệu")
+
+    @model_validator(mode="after")
+    def validate_question(self) -> "QuizQuestion":
+        if self.type == "multiple_choice":
+            if self.options is None or len(self.options) != 4 or len(set(self.options)) != 4:
+                raise ValueError("multiple_choice requires four distinct options")
+            if self.correct_answer not in self.options:
+                raise ValueError("correct_answer must match an option exactly")
+        elif self.options not in (None, []):
+            raise ValueError("short_answer must not contain options")
+        return self
 
 class QuizSet(BaseModel):
     title: str = Field(description="Tiêu đề bài kiểm tra")
@@ -265,15 +277,38 @@ def load_and_process_document(file_path: str | Path, course_id: str, source_name
     return splits
 
 
-def get_course_retriever(course_id: str, k: int = 6):
-    """Chỉ truy xuất chunks có metadata.course_id khớp chính xác."""
+def get_course_retriever(course_id: str, k: int = 6, document_id: UUID | None = None):
+    """Truy xuất theo khóa học và, nếu có, giới hạn trong một tài liệu."""
     _validate_course_id(course_id)
     if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
         raise ValueError("k must be a positive integer")
-    course_filter = Filter(must=[
-        FieldCondition(key="metadata.course_id", match=MatchValue(value=course_id)),
-    ])
+    conditions = [FieldCondition(key="metadata.course_id", match=MatchValue(value=course_id))]
+    if document_id is not None:
+        conditions.append(FieldCondition(key="metadata.document_id", match=MatchValue(value=str(document_id))))
+    course_filter = Filter(must=conditions)
     return get_vector_store().as_retriever(search_kwargs={"k": k, "filter": course_filter})
+
+
+def index_text_document(course_id: str, document_id: UUID, source_name: str, text: str) -> int:
+    """Nạp văn bản đã trích xuất từ Frontend vào Qdrant với danh tính tài liệu ổn định."""
+    _validate_course_id(course_id)
+    if not source_name.strip() or not text.strip():
+        raise ValueError("source_name and text must be non-empty")
+    source = Document(
+        page_content=text.strip(),
+        metadata={"source_name": Path(source_name.replace("\\", "/")).name, "document_id": str(document_id)},
+    )
+    chunker = SemanticChunker(embeddings=get_embeddings(), breakpoint_threshold_amount=0.85)
+    splits = [chunk for chunk in chunker.split_documents([source]) if chunk.page_content.strip()]
+    if not splits:
+        raise ValueError("Document produced no text chunks")
+    ids = []
+    for index, split in enumerate(splits):
+        split.metadata["course_id"] = course_id
+        split.metadata["document_id"] = str(document_id)
+        ids.append(str(uuid5(document_id, f"{index}:{split.page_content}")))
+    get_vector_store().add_documents(splits, ids=ids)
+    return len(splits)
 
 # ==========================================
 # 3. TẠO CÁC CHAIN GIÁO VIÊN AI
@@ -363,7 +398,9 @@ def get_teacher_chains(retriever=None, chain_names=None):
         "Yêu cầu kỹ thuật: (1) Mỗi câu có đúng 4 'options' khác biệt, KHÔNG dùng các lựa chọn lười biếng như 'Tất cả đều đúng/sai'. "
         "(2) Chỉ có duy nhất một đáp án đúng, và 'correct_answer' phải trích xuất nguyên văn từ 'options'. "
         "(3) 'explanation' không chỉ giải thích vì sao đáp án đúng, mà phải phân tích lỗi sai của các phương án nhiễu (distractors). "
-        "Đảm bảo câu hỏi có ngữ cảnh, không mơ hồ. Độ khó tăng dần",
+        "Đảm bảo câu hỏi có ngữ cảnh, không mơ hồ. Độ khó tăng dần. "
+        "Mỗi câu phải có type là multiple_choice hoặc short_answer; câu short_answer có options=null "
+        "và correct_answer là đáp án ngắn gọn.",
     )
     chains = {
         "summary": summary_chain,
@@ -401,6 +438,30 @@ async def generate_course_materials(
     chains = await asyncio.to_thread(get_teacher_chains, retriever, INITIAL_CHAIN_NAMES)
     chains = {name: chains[name] for name in INITIAL_CHAIN_NAMES}
     tasks = [asyncio.create_task(chain.ainvoke(requirement)) for chain in chains.values()]
+    try:
+        results = await asyncio.gather(*tasks)
+    except (Exception, asyncio.CancelledError):
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    return InitialCourseMaterialsResponse(
+        course_id=course_id, **dict(zip(chains.keys(), results)),
+        sources=build_source_metadata(documents),
+    )
+
+
+async def generate_course_materials_from_text(
+    course_id: str, document_id: UUID, source_name: str, text: str,
+) -> InitialCourseMaterialsResponse:
+    """Index ghi chú do người học gửi rồi sinh bộ học liệu dựa trên chính nội dung đó."""
+    if not source_name.strip() or not text.strip():
+        raise ValueError("source_name and text must be non-empty")
+    await asyncio.to_thread(index_text_document, course_id, document_id, source_name, text)
+    retriever = await asyncio.to_thread(get_course_retriever, course_id, 6, document_id)
+    documents = await asyncio.to_thread(retriever.invoke, DOCUMENT_REQUIREMENT)
+    chains = await asyncio.to_thread(get_teacher_chains, RunnableLambda(lambda _: documents), INITIAL_CHAIN_NAMES)
+    tasks = [asyncio.create_task(chain.ainvoke(DOCUMENT_REQUIREMENT)) for chain in chains.values()]
     try:
         results = await asyncio.gather(*tasks)
     except (Exception, asyncio.CancelledError):

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from uuid import UUID
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -96,6 +97,55 @@ class APIRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["access-control-allow-origin"], main.CORS_ORIGINS[0])
 
+    def test_index_text_document_returns_stable_document_metadata(self):
+        document_id = "46800000-0000-4000-8000-000000000001"
+        with patch.object(main.rag_service, "index_text_document", return_value=2) as index:
+            response = self.client.post(
+                "/api/v1/courses/course-1/documents/index",
+                json={"document_id": document_id, "source_name": "lesson.txt", "text": "MQTT notes"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"course_id": "course-1", "document_id": document_id, "chunk_count": 2})
+        index.assert_called_once_with("course-1", UUID(document_id), "lesson.txt", "MQTT notes")
+
+    def test_index_text_document_rejects_blank_text(self):
+        response = self.client.post(
+            "/api/v1/courses/course-1/documents/index",
+            json={"document_id": "46800000-0000-4000-8000-000000000001", "source_name": "lesson.txt", "text": " "},
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_index_text_document_reports_missing_payload_field_without_echoing_input(self):
+        response = self.client.post(
+            "/api/v1/courses/course-1/documents/index",
+            json={"document_id": "46800000-0000-4000-8000-000000000001", "source_name": "lesson.txt"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"][0]["loc"], ["body", "text"])
+        self.assertNotIn("input", response.json()["detail"][0])
+
+    def test_index_text_document_reports_generic_error_when_indexing_rejects_content(self):
+        with patch.object(main.rag_service, "index_text_document", side_effect=ValueError("Document produced no text chunks")):
+            response = self.client.post(
+                "/api/v1/courses/course-1/documents/index",
+                json={"document_id": "46800000-0000-4000-8000-000000000001", "source_name": "lesson.txt", "text": "Some content"},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json(), {"detail": "Document could not be indexed"})
+
+    def test_generate_course_uses_note_content_as_a_document_source(self):
+        document_id = "46800000-0000-4000-8000-000000000001"
+        result = rag_service.InitialCourseMaterialsResponse(course_id="course-1", **RESULTS)
+        with patch.object(main.rag_service, "generate_course_materials_from_text", new=AsyncMock(return_value=result)) as generate:
+            response = self.client.post("/api/v1/courses/generate", data={
+                "course_id": "course-1", "content": "MQTT dùng mô hình publish/subscribe.",
+                "document_id": document_id, "source_name": "Ghi chú MQTT",
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        generate.assert_awaited_once_with("course-1", UUID(document_id), "Ghi chú MQTT", "MQTT dùng mô hình publish/subscribe.")
+
     def test_podcast_route_returns_script_and_source_metadata(self):
         result = {
             "title": "MQTT cơ bản",
@@ -115,6 +165,35 @@ class APIRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["script"], result["script"])
         self.assertEqual(response.json()["sources"][0]["title"], "lesson.pdf")
+
+    def test_quiz_route_returns_requested_choice_and_short_answer_counts(self):
+        generated = {
+            "title": "MQTT",
+            "questions": [
+                {"type": "multiple_choice", "question": "Câu 1?", "options": ["A", "B", "C", "D"], "correct_answer": "A", "explanation": "Vì A"},
+                {"type": "multiple_choice", "question": "Câu 2?", "options": ["A", "B", "C", "D"], "correct_answer": "B", "explanation": "Vì B"},
+                {"type": "short_answer", "question": "Câu 3?", "options": None, "correct_answer": "Broker", "explanation": "Định tuyến tin nhắn"},
+                {"type": "multiple_choice", "question": "Câu thừa?", "options": ["A", "B", "C", "D"], "correct_answer": "C", "explanation": "Vì C"},
+            ],
+            "sources": [],
+        }
+        with patch("controllers.quiz_controller.generate_one_material", new=AsyncMock(return_value=generated)):
+            response = self.client.post(
+                "/api/v1/courses/course-1/materials/quiz/generate",
+                json={"material_source": "requirement", "instruction": "Tạo bài kiểm tra", "question_count": 3,
+                      "choice_count": 2, "short_answer_count": 1},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["type"] for item in response.json()["questions"]],
+                         ["multiple_choice", "multiple_choice", "short_answer"])
+
+    def test_quiz_route_rejects_counts_that_do_not_match_total(self):
+        response = self.client.post(
+            "/api/v1/courses/course-1/materials/quiz/generate",
+            json={"material_source": "requirement", "instruction": "Tạo bài kiểm tra", "question_count": 3,
+                  "choice_count": 1, "short_answer_count": 1},
+        )
+        self.assertEqual(response.status_code, 422)
 
     def test_individual_material_routes_include_source_metadata_and_podcast(self):
         schema = self.client.get("/openapi.json").json()

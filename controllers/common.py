@@ -1,5 +1,6 @@
 import asyncio
 from typing import Literal
+from uuid import UUID
 
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
@@ -13,6 +14,7 @@ class ChainGenerationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     material_source: Literal["document", "requirement"]
     instruction: str = Field(min_length=1, max_length=8000)
+    document_id: UUID | None = None
 
     @field_validator("instruction")
     @classmethod
@@ -27,7 +29,7 @@ async def generate_one_material(course_id: str, chain_name: str, payload: ChainG
     documents = []
     retriever = None
     if payload.material_source == "document":
-        retriever = await asyncio.to_thread(rag_service.get_course_retriever, course_id)
+        retriever = await asyncio.to_thread(rag_service.get_course_retriever, course_id, 6, payload.document_id)
         documents = await asyncio.to_thread(retriever.invoke, payload.instruction)
         retriever = RunnableLambda(lambda _: documents)
     chains = await asyncio.to_thread(rag_service.get_teacher_chains, retriever, [chain_name])
