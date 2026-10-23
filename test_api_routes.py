@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi.testclient import TestClient
 
 import main
+import rag_service
 from rag_service import CourseGenerationResponse
 from test_course_generation import RESULTS
 

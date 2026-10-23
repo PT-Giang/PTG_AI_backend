@@ -389,7 +389,8 @@ def get_teacher_chains(retriever=None, chain_names=None):
         "(1) Định dạng multiple_choice: Phải có đúng 4 'options', 'correct_answer' phải trùng khớp nguyên văn 100% "
         "với một option, ép buộc 'pairs' = null. "
         "(2) Định dạng matching: Phải có ít nhất 3 cặp 'pairs' (term - definition) có tính logic và dễ gây nhầm lẫn để tăng độ khó, "
-        "ép buộc 'options' = null và 'correct_answer' = null. ",
+        "ép buộc 'options' = null và 'correct_answer' = null. "
+        "Số lượng câu hỏi từ 10-20 đủ để người học nắm vững kiến thức từ lý thuyết đến thực hành",
     )
     quiz_chain = _build_teacher_chain(
         retriever, llm, QuizSet,
