@@ -1,4 +1,4 @@
-"""Explicit real E2E test: python test_api.py. Calls the configured LLM API."""
+"""Explicit real E2E test: python -m tests.test_api. Calls the configured LLM API."""
 import json
 import os
 import socket
@@ -12,16 +12,16 @@ import uvicorn
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
-import main
-from rag_service import InitialCourseMaterialsResponse, QuizSet
+from src import main
+from src.rag.schemas import InitialCourseMaterialsResponse, QuizSet
 
 
 def run_e2e():
     load_dotenv()
     if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")):
         raise RuntimeError("Configure DEEPSEEK_API_KEY or OPENAI_API_KEY before running E2E")
-    root = Path(__file__).resolve().parent
-    document = root / "papers" / "tai_lieu_nghien_cuu_zero_trust_tieng_viet.docx"
+    root = Path(__file__).resolve().parents[1]
+    document = root / "data" / "documents" / "tai_lieu_nghien_cuu_zero_trust_tieng_viet.docx"
     if not document.is_file():
         raise FileNotFoundError(document)
     collection = "e2e_test_" + uuid4().hex

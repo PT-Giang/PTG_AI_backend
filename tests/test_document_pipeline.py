@@ -12,7 +12,8 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_qdrant.qdrant import QdrantVectorStoreError
 from qdrant_client import QdrantClient, models
 
-import rag_service
+from src.rag import service as rag_service
+from src.rag import chunker, config, embeddings, loader, vector_store
 
 
 class ConstantEmbeddings(Embeddings):
@@ -33,8 +34,12 @@ class DocumentPipelineTests(unittest.TestCase):
             "courses", vectors_config=models.VectorParams(size=3, distance=models.Distance.COSINE)
         )
         self.store = QdrantVectorStore(self.client, "courses", embedding=ConstantEmbeddings())
-        for name, value in (("get_vector_store", self.store), ("get_embeddings", ConstantEmbeddings())):
-            patcher = patch.object(rag_service, name, return_value=value)
+        for module, name, value in (
+            (vector_store, "get_vector_store", self.store),
+            (embeddings, "get_embeddings", ConstantEmbeddings()),
+            (chunker, "get_embeddings", ConstantEmbeddings()),
+        ):
+            patcher = patch.object(module, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -42,10 +47,10 @@ class DocumentPipelineTests(unittest.TestCase):
         path = Path(self.temp.name) / (course_id + suffix)
         path.write_bytes(b"mock document")
         doc = Document(page_content="Shared topic", metadata={"source": str(path), "page": 2})
-        with patch.object(rag_service, "UnstructuredFileLoader") as loader:
-            loader.return_value.load.return_value = [doc]
+        with patch.object(loader, "UnstructuredFileLoader") as file_loader:
+            file_loader.return_value.load.return_value = [doc]
             chunks = rag_service.load_and_process_document(path, course_id)
-            loader.assert_called_once_with(str(path), strategy="fast", languages=["vie", "eng"])
+            file_loader.assert_called_once_with(str(path), strategy="fast", languages=["vie", "eng"])
         return chunks
 
     def test_pdf_and_docx_preserve_metadata_and_isolate_courses(self):
@@ -81,8 +86,8 @@ class DocumentPipelineTests(unittest.TestCase):
     def test_empty_document_does_not_write_vectors(self):
         path = Path(self.temp.name) / "empty.pdf"
         path.write_bytes(b"mock")
-        with patch.object(rag_service, "UnstructuredFileLoader") as loader:
-            loader.return_value.load.return_value = [Document(page_content="  ")]
+        with patch.object(loader, "UnstructuredFileLoader") as file_loader:
+            file_loader.return_value.load.return_value = [Document(page_content="  ")]
             with self.assertRaises(ValueError):
                 rag_service.load_and_process_document(path, "course-a")
         self.assertEqual(self.client.count("courses").count, 0)
@@ -99,13 +104,25 @@ class DocumentPipelineTests(unittest.TestCase):
         self.assertEqual(results[0].metadata["source_name"], "first.txt")
         self.assertEqual(rag_service.get_course_retriever("course-a", document_id=uuid4()).invoke("protocol"), [])
 
+    def test_uploaded_file_can_be_retrieved_by_document_id_without_other_sources(self):
+        first_id, second_id = uuid4(), uuid4()
+        path = Path(self.temp.name) / "lesson.pdf"
+        path.write_bytes(b"mock document")
+        with patch.object(vector_store, "load_document", return_value=[Document(page_content="MQTT broker")]):
+            vector_store.load_and_process_document(path, "course-a", "lesson.pdf", first_id)
+        rag_service.index_text_document("course-a", second_id, "other.txt", "HTML elements")
+        results = rag_service.get_course_retriever("course-a", document_id=first_id).invoke("quiz")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].page_content, "MQTT broker")
+        self.assertEqual(results[0].metadata["document_id"], str(first_id))
+
 
 class VectorStoreTests(unittest.TestCase):
     def test_creates_collection_then_reuses_existing_data(self):
         with closing(QdrantClient(location=":memory:")) as client:
-            with patch.object(rag_service, "get_qdrant_client", return_value=client), \
-                 patch.object(rag_service, "get_embeddings", return_value=ConstantEmbeddings()), \
-                 patch.object(rag_service, "load_dotenv"), \
+            with patch.object(vector_store, "get_qdrant_client", return_value=client), \
+                 patch.object(vector_store, "get_embeddings", return_value=ConstantEmbeddings()), \
+                 patch.object(config, "load_config"), \
                  patch.dict(os.environ, {"QDRANT_COLLECTION_NAME": "new-courses"}):
                 store = rag_service.get_vector_store()
                 store.add_documents([Document(page_content="Keep me", metadata={"course_id": "old"})])
@@ -116,9 +133,9 @@ class VectorStoreTests(unittest.TestCase):
     def test_incompatible_existing_collection_is_not_recreated(self):
         with closing(QdrantClient(location=":memory:")) as client:
             client.create_collection("incompatible", vectors_config=models.VectorParams(size=2, distance=models.Distance.COSINE))
-            with patch.object(rag_service, "get_qdrant_client", return_value=client), \
-                 patch.object(rag_service, "get_embeddings", return_value=ConstantEmbeddings()), \
-                 patch.object(rag_service, "load_dotenv"), \
+            with patch.object(vector_store, "get_qdrant_client", return_value=client), \
+                 patch.object(vector_store, "get_embeddings", return_value=ConstantEmbeddings()), \
+                 patch.object(config, "load_config"), \
                  patch.dict(os.environ, {"QDRANT_COLLECTION_NAME": "incompatible"}):
                 with self.assertRaises(QdrantVectorStoreError):
                     rag_service.get_vector_store()

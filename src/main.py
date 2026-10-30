@@ -14,17 +14,16 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from uuid import UUID
 
-from controllers import routers as material_routers
-import rag_service
-import chat_service
-from chat_service import ChatRequest
-from rag_service import InitialCourseMaterialsResponse
+from src.controllers import routers as material_routers
+from src import chat_service
+from src.rag import service as rag_service
+from src.chat_service import ChatRequest
+from src.rag.schemas import DOCUMENT_REQUIREMENT, InitialCourseMaterialsResponse
 
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-UPLOAD_DIR = Path(__file__).resolve().parent / "temp_uploads"
-DOCUMENT_REQUIREMENT = "Tạo bộ học liệu tiếng Việt từ các nội dung chính trong tài liệu."
+UPLOAD_DIR = Path(__file__).resolve().parent.parent / "temp_uploads"
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "*",).split(",")
@@ -118,7 +117,7 @@ def _save_upload(file: UploadFile, path: Path):
         shutil.copyfileobj(file.file, destination, length=1024 * 1024)
 
 
-async def _process_upload(file: UploadFile, course_id: str, requirement: str):
+async def _process_upload(file: UploadFile, course_id: str, requirement: str, document_id: UUID | None = None):
     path = None
     try:
         suffix = Path(file.filename or "").suffix.lower()
@@ -133,6 +132,8 @@ async def _process_upload(file: UploadFile, course_id: str, requirement: str):
         await asyncio.to_thread(_save_upload, file, path)
         if path.stat().st_size == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if document_id is not None:
+            return await rag_service.generate_course_materials(path, course_id, requirement, file.filename, document_id)
         return await rag_service.generate_course_materials(path, course_id, requirement, file.filename)
     finally:
         try:
@@ -169,7 +170,7 @@ async def generate_course(
             raise HTTPException(status_code=422, detail="Provide either a file or a non-blank requirement")
         return await rag_service.generate_course_materials(None, course_id, requirement)
     # Khi request bị hủy, chờ worker ngừng dùng file rồi mới dọn file tạm.
-    task = asyncio.create_task(_process_upload(file, course_id, DOCUMENT_REQUIREMENT))
+    task = asyncio.create_task(_process_upload(file, course_id, DOCUMENT_REQUIREMENT, document_id))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:

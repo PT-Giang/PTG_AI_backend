@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
-import main
-import rag_service
-from rag_service import CourseGenerationResponse
-from test_course_generation import RESULTS
+from src import main
+from src.rag import service as rag_service
+from src.rag.schemas import CourseGenerationResponse
+from tests.test_course_generation import RESULTS
 
 
 class APIRouteTests(unittest.TestCase):
@@ -55,6 +55,15 @@ class APIRouteTests(unittest.TestCase):
             response = self.post()
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("private credential", response.text)
+        self.assertEqual(list(self.uploads.iterdir()), [])
+
+    def test_upload_passes_document_id_to_pipeline(self):
+        document_id = "46800000-0000-4000-8000-000000000001"
+        result = rag_service.InitialCourseMaterialsResponse(course_id="course-1", **RESULTS)
+        with patch.object(main.rag_service, "generate_course_materials", new=AsyncMock(return_value=result)) as generate:
+            response = self.post(data={"course_id": "course-1", "document_id": document_id})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(generate.await_args.args[4], UUID(document_id))
         self.assertEqual(list(self.uploads.iterdir()), [])
 
     def test_rejects_unsupported_and_empty_files(self):
@@ -158,7 +167,7 @@ class APIRouteTests(unittest.TestCase):
                 "retrieved_at": "2026-10-14T12:00:00Z", "is_mock": False, "document_id": None,
             }],
         }
-        with patch("controllers.podcast_controller.generate_one_material", new=AsyncMock(return_value=result)):
+        with patch("src.controllers.podcast_controller.generate_one_material", new=AsyncMock(return_value=result)):
             response = self.client.post(
                 "/api/v1/courses/course-1/materials/podcast/generate",
                 json={"material_source": "document", "instruction": "Giải thích MQTT"},
@@ -178,7 +187,7 @@ class APIRouteTests(unittest.TestCase):
             ],
             "sources": [],
         }
-        with patch("controllers.quiz_controller.generate_one_material", new=AsyncMock(return_value=generated)):
+        with patch("src.controllers.quiz_controller.generate_one_material", new=AsyncMock(return_value=generated)):
             response = self.client.post(
                 "/api/v1/courses/course-1/materials/quiz/generate",
                 json={"material_source": "requirement", "instruction": "Tạo bài kiểm tra", "question_count": 3,

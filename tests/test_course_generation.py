@@ -9,7 +9,8 @@ from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
-import rag_service
+from src.rag import service as rag_service
+from src.rag import llm as llm_module
 
 
 RESULTS = {
@@ -34,7 +35,7 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
             prompts.append(prompt.to_string())
             return json.dumps(RESULTS["summary"])
 
-        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(answer)):
+        with patch.object(llm_module, "ChatOpenAI", return_value=RunnableLambda(answer)):
             chain = rag_service.get_teacher_chains()["summary"]
         await chain.ainvoke("Tôi muốn học HTML5")
         self.assertIn("HTML5", prompts[0])
@@ -42,7 +43,7 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Chỉ dùng kiến thức trong ngữ cảnh", prompts[0])
 
     def test_chain_factory_can_select_one_material_chain(self):
-        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(lambda _: "{}")):
+        with patch.object(llm_module, "ChatOpenAI", return_value=RunnableLambda(lambda _: "{}")):
             chains = rag_service.get_teacher_chains(None, ["podcast"])
         self.assertEqual(set(chains), {"podcast"})
     async def test_all_chains_use_context_requirement_and_parse_json(self):
@@ -58,7 +59,7 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("Prompt does not identify its schema")
 
         retriever = RunnableLambda(lambda _: [Document(page_content="MQTT context", metadata={"source": "lesson.pdf", "page": 1})])
-        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(answer)) as llm:
+        with patch.object(llm_module, "ChatOpenAI", return_value=RunnableLambda(answer)) as llm:
             chains = rag_service.get_teacher_chains(retriever)
         self.assertEqual(set(chains), set(RESULTS))
         self.assertEqual(llm.call_args.kwargs["model"], "deepseek-v4-flash")
@@ -69,14 +70,14 @@ class ChainTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_valid_json_with_invalid_schema_is_rejected(self):
         retriever = RunnableLambda(lambda _: [Document(page_content="MQTT")])
-        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(lambda _: '{"title": "Incomplete"}')):
+        with patch.object(llm_module, "ChatOpenAI", return_value=RunnableLambda(lambda _: '{"title": "Incomplete"}')):
             chain = rag_service.get_teacher_chains(retriever)["summary"]
         with self.assertRaises(ValidationError):
             await chain.ainvoke("MQTT")
 
     async def test_non_json_output_is_rejected(self):
         retriever = RunnableLambda(lambda _: [Document(page_content="MQTT")])
-        with patch.object(rag_service, "ChatOpenAI", return_value=RunnableLambda(lambda _: "not JSON")):
+        with patch.object(llm_module, "ChatOpenAI", return_value=RunnableLambda(lambda _: "not JSON")):
             chain = rag_service.get_teacher_chains(retriever)["quiz"]
         with self.assertRaises(OutputParserException):
             await chain.ainvoke("MQTT")

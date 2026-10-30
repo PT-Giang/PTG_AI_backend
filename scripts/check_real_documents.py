@@ -1,4 +1,4 @@
-"""Run real loader, embedding and Qdrant: python check_real_documents.py."""
+"""Run real loader, embedding and Qdrant: python -m scripts.check_real_documents."""
 import os
 import time
 from pathlib import Path
@@ -6,14 +6,15 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-import rag_service
+from src.rag import service as rag_service
 
 
 def main():
     load_dotenv()
-    files = sorted(path for path in Path("papers").iterdir() if path.suffix.lower() in {".docx", ".pdf"})
+    data_dir = Path(__file__).resolve().parents[1] / "data" / "documents"
+    files = sorted(path for path in data_dir.iterdir() if path.suffix.lower() in {".docx", ".pdf"})
     if not files:
-        raise RuntimeError("No PDF/DOCX files found in papers/")
+        raise RuntimeError(f"No PDF/DOCX files found in {data_dir}")
     collection = "real_docs_test_" + uuid4().hex
     previous = os.environ.get("QDRANT_COLLECTION_NAME")
     os.environ["QDRANT_COLLECTION_NAME"] = collection

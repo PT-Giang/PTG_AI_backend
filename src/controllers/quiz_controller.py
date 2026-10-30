@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import Field, model_validator
 
-from controllers.common import ChainGenerationRequest, generate_one_material
-from rag_service import QuizSetGenerationResponse
+from src.controllers.common import ChainGenerationRequest, generate_one_material
+from src.rag.schemas import QuizSetGenerationResponse
 
 
 router = APIRouter(tags=["quiz"])
@@ -46,11 +46,23 @@ async def generate_quiz(course_id: str, payload: QuizGenerationRequest):
             f"{payload.short_answer_count} câu short_answer. Không tạo nhiều hay ít hơn."
         ),
     })
-    result = await generate_one_material(course_id, "quiz", request_with_count)
-    questions = result["questions"]
-    choices = [question for question in questions if question.get("type", "multiple_choice") == "multiple_choice"]
-    short_answers = [question for question in questions if question.get("type") == "short_answer"]
+    result = QuizSetGenerationResponse.model_validate(await generate_one_material(course_id, "quiz", request_with_count))
+    
+    # 1. Lấy danh sách questions từ result object
+    questions = result.questions
+
+    # 2. Đảm bảo hỗ trợ cả trường hợp question là Pydantic Model lẫn dict
+    def get_q_type(q):
+        return getattr(q, "type", None) if hasattr(q, "type") else q.get("type", "multiple_choice")
+
+    choices = [q for q in questions if get_q_type(q) == "multiple_choice"]
+    short_answers = [q for q in questions if get_q_type(q) == "short_answer"]
+
+    # 3. Kiểm tra số lượng câu hỏi
     if len(choices) < payload.choice_count or len(short_answers) < payload.short_answer_count:
         raise HTTPException(status_code=502, detail="AI chưa tạo đủ số lượng từng dạng câu hỏi yêu cầu.")
-    result["questions"] = choices[:payload.choice_count] + short_answers[:payload.short_answer_count]
+
+    # 4. Gán lại danh sách questions thông qua attribute (hoặc dùng model_copy)
+    result.questions = choices[:payload.choice_count] + short_answers[:payload.short_answer_count]
+    
     return result

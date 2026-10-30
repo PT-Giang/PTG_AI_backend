@@ -43,7 +43,7 @@
 - [x] `StudyQuestion` hỗ trợ cả dạng `multiple_choice` và `matching` kèm gợi ý và kiến thức cốt lõi.
 - [x] `CourseGenerationResponse` tổng hợp các thành phần học liệu cùng `course_id`; hiện có thêm `study_guide`.
 **Verification:**
-- [x] Import: `.\.venv\Scripts\python.exe -c "from rag_service import CourseGenerationResponse; print('Schemas OK')"` → `Schemas OK`.
+- [x] Import: `.\.venv\Scripts\python.exe -c "from src.rag.schemas import CourseGenerationResponse; print('Schemas OK')"` → `Schemas OK`.
 - [x] `.\.venv\Scripts\python.exe -m unittest discover -v` → 5 tests passed; kiểm tra dữ liệu mẫu, JSON round-trip, JSON Schema và từ chối câu hỏi không hợp lệ.
 **Schema contract:** `course_id` là chuỗi; summary gồm `title`, `overview`, `key_points`; study questions gồm `title`, `questions`. Mỗi câu hỏi có `type`, `question`, `hint`, `core_knowledge`; `multiple_choice` yêu cầu 4 `options` khác nhau và `correct_answer` khớp một phương án; `matching` yêu cầu `pairs` gồm `term`, `definition`. Các trường dành cho dạng câu hỏi khác phải bỏ qua hoặc là `null`.
 **Imports:** Thư viện RAG được import ở đầu `rag_service.py`; cần môi trường đã cài đủ dependencies để import module. Pipeline RAG chưa được kiểm thử ở Task 2.
@@ -67,7 +67,7 @@
 - [x] Python global chạy `-m unittest discover -v`: 11 tests passed (6 pipeline/collection và 5 schema), bao gồm tạo collection, mở lại giữ dữ liệu và từ chối collection sai kích thước vector.
 **Reference:** https://qdrant.tech/documentation/frameworks/langchain/
 - [x] Kiểm thử tài liệu thật bằng Python global chạy `check_real_documents.py`: loader thật + `multilingual-e5-small` thật + Qdrant Docker 1.19.1. `200_tu_vung_tieng_anh.docx`: 397 chunks; `tai_lieu_nghien_cuu_zero_trust_tieng_viet.docx`: 81 chunks; tổng 478 points. Truy xuất k=3 đúng nguồn/course, truy vấn sau khi nạp cả hai vẫn phân lập khóa học, course không tồn tại trả rỗng. Thời gian 72.4 giây (không gồm import); collection thử đã xóa. Chưa kiểm thử PDF thật.
-- [x] Kiểm thử server Docker thật bằng `python check_qdrant_server.py`: Qdrant 1.19.1; course-a trả 2 chunks, course-b trả 1, mã không tồn tại trả 0; k=1 đúng; nạp thêm giữ đủ 3 points. Collection thử riêng đã được xóa sau test. Loader/embedding vẫn giả lập; chưa kiểm tra trích xuất file và embedding thật.
+- [x] Kiểm thử server Docker thật bằng `python -m scripts.check_qdrant_server`: Qdrant 1.19.1; course-a trả 2 chunks, course-b trả 1, mã không tồn tại trả 0; k=1 đúng; nạp thêm giữ đủ 3 points. Collection thử riêng đã được xóa sau test. Loader/embedding vẫn giả lập; chưa kiểm tra trích xuất file và embedding thật.
 **Dependencies:** Task 2
 **Files likely touched:**
 - `rag_service.py`
@@ -117,19 +117,19 @@
 **Estimated scope:** S (1 file)
 
 ### Task 6: Kiểm thử tích hợp tự động & End-to-End
-**Description:** Viết kịch bản kiểm thử tích hợp (hoặc test script) gửi request multipart upload file mẫu trong `papers/` tới server, kiểm tra dữ liệu JSON phản hồi và xác nhận các trường dữ liệu.
+**Description:** Viết kịch bản kiểm thử tích hợp (hoặc test script) gửi request multipart upload file mẫu trong `data/documents/` tới server, kiểm tra dữ liệu JSON phản hồi và xác nhận các trường dữ liệu.
 **Acceptance criteria:**
 - [x] Server phản hồi HTTP 200 qua HTTP thật tới Uvicorn.
 - [x] JSON kết quả có đủ 4 thành phần: `summary`, `flashcards`, `study_questions`, `quiz`; validate bằng `CourseGenerationResponse`.
 - [x] File tạm được xóa sạch sau khi xử lý xong.
 **Verification:**
-- [x] Python global chạy `python test_api.py` ngày 2026-09-22: tài liệu Zero Trust DOCX thật, embedding thật, Qdrant Docker 1.19.1, LLM theo cấu hình thật. HTTP 200; 81 points; 3 flashcards, 5 câu ôn tập (có cả multiple_choice/matching), 5 quiz; 48.7 giây không gồm import.
+- [x] Python global chạy `python -m tests.test_api` ngày 2026-09-22: tài liệu Zero Trust DOCX thật, embedding thật, Qdrant Docker 1.19.1, LLM theo cấu hình thật. HTTP 200; 81 points; 3 flashcards, 5 câu ôn tập (có cả multiple_choice/matching), 5 quiz; 48.7 giây không gồm import.
 - [x] Sau kiểm thử: file upload đã xóa, collection thử đã xóa, server Uvicorn thử đã tắt. Sửa thứ tự đóng socket trong script để shutdown sạch trên Windows.
 **Artifacts:** `test_results/course_response.json`, `test_results/e2e_report.json` (gitignored). Hướng dẫn chạy lại ở `README.md`.
 **Limitations:** LLM chưa tuân thủ chính xác số lượng yêu cầu trong prompt (yêu cầu 2 câu ôn tập/3 quiz nhưng trả 5/5); số lượng chưa được kiểm tra cưỡng chế. E2E xác nhận luồng và schema, không xác nhận mọi phát biểu của LLM; chưa chạy PDF thật.
 **Dependencies:** Task 5
 **Files likely touched:**
-- `test_api.py` (file kiểm thử)
+- `tests/test_api.py` (file kiểm thử)
 **Estimated scope:** S (1 file)
 
 ### Checkpoint: Complete

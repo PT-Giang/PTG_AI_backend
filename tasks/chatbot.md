@@ -26,7 +26,7 @@ Hủy kết nối phải đóng stream LLM. Giới hạn tổng history 32000 k�
 3. test_chat.py: validation, history, tổng quát không gọi retrieval, course filter/context, SSE delta/done/error, hủy stream.
 4. README.md: contract, ví dụ và trách nhiệm Spring Boot chuyển tiếp SSE.
 
-Chạy: `python -m uvicorn main:app --port 8000`.
+Chạy: `python -m uvicorn src.main:app --port 8000`.
 Kiểm thử: `python -m unittest discover -v` bằng Python global 3.10.
 Style: imports đầu file, Pydantic v2, async cho LLM; việc khởi tạo retriever đồng bộ dùng asyncio.to_thread.
 Chỉ gọi LLM thật khi cần kiểm tra thực tế; test tự động dùng giả lập.

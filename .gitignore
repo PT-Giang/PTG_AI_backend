@@ -16,3 +16,8 @@ venv/
 # Temporary API uploads
 temp_uploads/
 test_results/
+
+# Generated or transformed files; keep the directory itself in version control
+data/processed/*
+!data/processed/.gitkeep
+!data/processed/README.md

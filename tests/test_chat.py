@@ -8,9 +8,8 @@ from langchain_core.documents import Document
 from langchain_core.messages import AIMessageChunk
 from pydantic import ValidationError
 
-import chat_service
-import main
-from test_course_generation import RESULTS
+from src import chat_service, main
+from tests.test_course_generation import RESULTS
 
 
 def event_data(frame):

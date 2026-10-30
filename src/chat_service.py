@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-import rag_service
-from rag_service import CourseGenerationResponse
+from src.rag import service as rag_service
+from src.rag.schemas import CourseGenerationResponse
 
 
 logger = logging.getLogger(__name__)

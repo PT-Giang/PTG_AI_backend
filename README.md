@@ -1,11 +1,35 @@
 # AI Course Backend
 
+## Cấu trúc dự án
+
+```text
+data/
+  documents/       Tài liệu nguồn dùng để học và kiểm thử
+  processed/       Dữ liệu trung gian đã xử lý
+src/
+  main.py           FastAPI app và HTTP endpoints
+  controllers/      Controller cho từng loại học liệu
+  chat_service.py   Luồng chat streaming
+  rag/
+    config.py       Cấu hình Qdrant và LLM
+    loader.py       Đọc PDF/DOCX
+    chunker.py      Chia tài liệu thành chunks
+    embeddings.py   Khởi tạo embedding model
+    vector_store.py Lưu và truy xuất Qdrant
+    llm.py          Prompt và các LLM chain
+    schemas.py      Schema request/response
+    service.py      Điều phối pipeline RAG
+tests/              Unit test và test API
+scripts/            Script kiểm tra Qdrant/tài liệu
+notebooks/          Thử nghiệm và phân tích ngoài phần core
+```
+
 ## Chạy API
 
 Dùng môi trường Python đã cài `requirements.txt` (hiện dự án dùng Python global 3.10):
 
 ```powershell
-python -m uvicorn main:app --host 127.0.0.1 --port 8000
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 ```
 
 Swagger UI: `http://127.0.0.1:8000/docs`.
@@ -30,7 +54,7 @@ Biến môi trường được nạp bằng `load_dotenv()`:
 Nếu gửi cả hai hoặc không gửi lựa chọn nào, API trả 422. `requirement` dùng form field; có thể gửi `application/x-www-form-urlencoded` khi không có file. Hai ví dụ PowerShell:
 
 ```powershell
-curl.exe http://127.0.0.1:8000/api/v1/courses/generate -F "file=@papers/200_tu_vung_tieng_anh.docx" -F "course_id=english-1"
+curl.exe http://127.0.0.1:8000/api/v1/courses/generate -F "file=@data/documents/200_tu_vung_tieng_anh.docx" -F "course_id=english-1"
 
 curl.exe http://127.0.0.1:8000/api/v1/courses/generate -F "course_id=html5-1" -F "requirement=Tôi muốn học HTML5 từ cơ bản"
 ```
@@ -116,17 +140,24 @@ Client dùng cơ chế đọc stream hỗ trợ POST JSON (ví dụ fetch); khô
 ## Kiểm thử
 
 ```powershell
-python -m unittest discover -v
+python -m unittest discover -s tests -v
 ```
 
-Bộ test tự động giả lập LLM và không gọi DeepSeek. Các script `check_qdrant_server.py` và `check_real_documents.py` dùng Qdrant thật với collection thử riêng và tự dọn collection sau kiểm tra.
+Bộ test tự động giả lập LLM và không gọi DeepSeek. Các script `scripts/check_qdrant_server.py` và `scripts/check_real_documents.py` dùng Qdrant thật với collection thử riêng và tự dọn collection sau kiểm tra.
+
+Chạy riêng các script kiểm tra:
+
+```powershell
+python -m scripts.check_qdrant_server
+python -m scripts.check_real_documents
+```
 
 ### E2E với LLM thật
 
 ```powershell
-python test_api.py
+python -m tests.test_api
 ```
 
-Cần Qdrant đang chạy và API key hợp lệ. Script tự mở Uvicorn trên cổng localhost trống, thử requirement HTML5 độc lập rồi upload tài liệu Zero Trust trong `papers/`, gọi LLM thật (có thể phát sinh phí), kiểm tra schema và dọn file tạm. Chế độ requirement được kiểm tra không tạo collection. Collection thử riêng của chế độ tài liệu được xóa và server thử được tắt sau khi chạy. Không cần mở server trước.
+Cần Qdrant đang chạy và API key hợp lệ. Script tự mở Uvicorn trên cổng localhost trống, thử requirement HTML5 độc lập rồi upload tài liệu Zero Trust trong `data/documents/`, gọi LLM thật (có thể phát sinh phí), kiểm tra schema và dọn file tạm. Chế độ requirement được kiểm tra không tạo collection. Collection thử riêng của chế độ tài liệu được xóa và server thử được tắt sau khi chạy. Không cần mở server trước.
 
 Kết quả riêng ở `test_results/requirement_html5.json`, `test_results/requirement_html5_quiz.json`, `test_results/document_zero_trust.json` và `test_results/document_zero_trust_quiz.json` (`course_response.json` cũng giữ bản kết quả ban đầu cho tài liệu); báo cáo HTTP, số học liệu, thời gian và cleanup ở `test_results/e2e_report.json`. Thư mục này không được đưa vào Git. E2E kiểm tra bốn phần ban đầu, quiz được gọi riêng, hai dạng câu ôn tập và schema; không chấm tự động độ chính xác toàn bộ nội dung hay ép chính xác số câu yêu cầu trong prompt.

@@ -1,12 +1,14 @@
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
+from fastapi import HTTPException
 
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
-import controllers.common as generation_common
-from controllers.common import ChainGenerationRequest
-from rag_service import build_source_metadata
+import src.controllers.common as generation_common
+from src.controllers.common import ChainGenerationRequest
+from src.rag.schemas import build_source_metadata
 
 
 class GenerationSourceTests(unittest.TestCase):
@@ -27,6 +29,16 @@ class GenerationSourceTests(unittest.TestCase):
 
 
 class GenerationControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_document_context_never_calls_llm(self):
+        request = ChainGenerationRequest(material_source="document", instruction="Tạo quiz", document_id=uuid4())
+        with patch.object(generation_common.rag_service, "get_course_retriever", return_value=RunnableLambda(lambda _: [])) as retrieve, \
+             patch.object(generation_common.rag_service, "get_teacher_chains") as chains:
+            with self.assertRaises(HTTPException) as error:
+                await generation_common.generate_one_material("course-1", "quiz", request)
+        self.assertEqual(error.exception.status_code, 422)
+        retrieve.assert_called_once_with("course-1", 6, request.document_id)
+        chains.assert_not_called()
+
     async def test_document_generation_returns_sources_from_the_same_retrieval_context(self):
         documents = [Document(
             page_content="MQTT dùng broker để định tuyến thông điệp.",
@@ -45,9 +57,9 @@ class GenerationControllerTests(unittest.IsolatedAsyncioTestCase):
              patch.object(generation_common.rag_service, "get_teacher_chains", side_effect=build_chains):
             result = await generation_common.generate_one_material("course-1", "summary", request)
 
-        self.assertEqual(result["title"], "MQTT")
-        self.assertEqual(result["sources"][0]["title"], "lesson.pdf")
-        self.assertEqual(result["sources"][0]["excerpt"], "Trang 2: MQTT dùng broker để định tuyến thông điệp.")
+        self.assertEqual(result.title, "MQTT")
+        self.assertEqual(result.sources[0].title, "lesson.pdf")
+        self.assertEqual(result.sources[0].excerpt, "Trang 2: MQTT dùng broker để định tuyến thông điệp.")
 
     async def test_requirement_generation_returns_no_fabricated_sources(self):
         request = ChainGenerationRequest(material_source="requirement", instruction="Học MQTT")
@@ -57,7 +69,7 @@ class GenerationControllerTests(unittest.IsolatedAsyncioTestCase):
              }):
             result = await generation_common.generate_one_material("course-1", "summary", request)
         get_retriever.assert_not_called()
-        self.assertEqual(result["sources"], [])
+        self.assertEqual(result.sources, [])
 
 
 if __name__ == "__main__":

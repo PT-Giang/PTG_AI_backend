@@ -1,4 +1,4 @@
-"""Run explicitly: python check_qdrant_server.py (uses configured QDRANT_URL)."""
+"""Run explicitly: python -m scripts.check_qdrant_server (uses configured QDRANT_URL)."""
 import os
 import tempfile
 from pathlib import Path
@@ -9,8 +9,11 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 
-import rag_service
-from test_document_pipeline import ConstantEmbeddings
+from src.rag import service as rag_service
+from src.rag import chunker
+from src.rag import loader as document_loader
+from src.rag import vector_store as vector_store_module
+from tests.test_document_pipeline import ConstantEmbeddings
 
 
 def main():
@@ -22,8 +25,9 @@ def main():
         print("Qdrant server version:", client.info().version, flush=True)
         assert not client.collection_exists(collection)
         with patch.dict(os.environ, {"QDRANT_COLLECTION_NAME": collection}), \
-             patch.object(rag_service, "get_qdrant_client", return_value=client), \
-             patch.object(rag_service, "get_embeddings", return_value=ConstantEmbeddings()), \
+             patch.object(vector_store_module, "get_qdrant_client", return_value=client), \
+             patch.object(vector_store_module, "get_embeddings", return_value=ConstantEmbeddings()), \
+             patch.object(chunker, "get_embeddings", return_value=ConstantEmbeddings()), \
              tempfile.TemporaryDirectory() as temp:
             rag_service.get_vector_store()
             created = True
@@ -32,7 +36,7 @@ def main():
                 path = Path(temp) / (course + suffix)
                 path.write_bytes(b"mock loader input")
                 doc = Document(page_content="Shared topic", metadata={"source": str(path), "page": 1})
-                with patch.object(rag_service, "UnstructuredFileLoader") as loader:
+                with patch.object(document_loader, "UnstructuredFileLoader") as loader:
                     loader.return_value.load.return_value = [doc]
                     rag_service.load_and_process_document(path, course)
             assert client.count(collection, exact=True).count == 3

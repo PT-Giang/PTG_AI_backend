@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from controllers.common import ChainGenerationRequest, generate_one_material
-from rag_service import FlashcardSetGenerationResponse
+from src.controllers.common import ChainGenerationRequest, generate_one_material
+from src.rag.schemas import FlashcardSetGenerationResponse
 
 
 router = APIRouter(tags=["flashcards"])

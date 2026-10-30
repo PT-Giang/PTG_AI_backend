@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from rag_service import CourseGenerationResponse, GenerationSource, PodcastGenerationResponse, StudyQuestion
+from src.rag.schemas import CourseGenerationResponse, GenerationSource, PodcastGenerationResponse, StudyQuestion
 
 
 def multiple_choice(**changes):
